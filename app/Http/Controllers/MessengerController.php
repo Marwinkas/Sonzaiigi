@@ -5,25 +5,30 @@ namespace App\Http\Controllers;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\User;
-use App\Models\FavoriteGif; // <-- Убедись, что модель существует
+use App\Models\FavoriteGif;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use Illuminate\Support\Facades\Storage; // <-- Добавили для работы с дисками
+use Illuminate\Support\Facades\Storage;
 
 class MessengerController extends Controller
 {
-    // --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ CDN ---
-    // Берет URL из .env или использует стандартный путь
-    private function getCdnUrl() {
-        return rtrim(env('AWS_URL', asset('storage')), '/');
+    // --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ S3 ---
+    // Аккуратно достает правильную ссылку на файл из облака
+    private function getFileUrl($path) {
+        if (!$path) return null;
+
+        // Если это уже полная ссылка (например, внешняя аватарка), возвращаем как есть
+        if (str_starts_with($path, 'http')) return $path;
+
+        // Просим систему саму собрать правильную ссылку для нашего S3 диска
+        return Storage::disk('s3')->url($path);
     }
 
     public function index(Request $request)
     {
         $user = Auth::user();
-        $cdn = $this->getCdnUrl();
 
         $chats = $user->conversations()
             ->with(['users', 'messages' => function ($q) {
@@ -31,7 +36,7 @@ class MessengerController extends Controller
             }])
             ->withCount('messages')
             ->get()
-            ->map(function ($conv) use ($user, $cdn) {
+            ->map(function ($conv) use ($user) {
                 $lastMsg = $conv->messages->first();
 
                 // 1. ЕСЛИ ЭТО ГРУППА
@@ -40,7 +45,7 @@ class MessengerController extends Controller
                         'id' => $conv->id,
                         'is_group' => true,
                         'name' => $conv->name,
-                        'avatar' => $conv->avatar ? $cdn . '/' . ltrim($conv->avatar, '/') : null,
+                        'avatar' => $this->getFileUrl($conv->avatar),
                         'invite_token' => $conv->invite_token,
                         'lastMessage' => $lastMsg ? $lastMsg->body : 'Нет сообщений',
                         'time' => $lastMsg ? $lastMsg->created_at->format('H:i') : '',
@@ -56,10 +61,8 @@ class MessengerController extends Controller
 
                 $otherUser->load(['followers', 'following', 'blockers', 'mutedBy']);
 
-                // Подставляем CDN к аватару собеседника
-                if ($otherUser->avatar && !str_starts_with($otherUser->avatar, 'http')) {
-                    $otherUser->avatar = $cdn . '/' . ltrim($otherUser->avatar, '/');
-                }
+                // Подставляем красивую ссылку к аватару собеседника
+                $otherUser->avatar = $this->getFileUrl($otherUser->avatar);
 
                 $iFollowThem = DB::table('follows')->where('follower_id', $user->id)->where('followed_id', $otherUser->id)->exists();
                 $theyFollowMe = DB::table('follows')->where('follower_id', $otherUser->id)->where('followed_id', $user->id)->exists();
@@ -132,7 +135,7 @@ class MessengerController extends Controller
         ]);
     }
 
-    // --- ПОЛНЫЙ КОД ЗАГРУЗКИ КАРТИНКИ ---
+    // --- ПОЛНЫЙ КОД ЗАГРУЗКИ КАРТИНКИ (ТЕПЕРЬ В S3) ---
     public function store(Request $request, Conversation $conversation)
     {
         $request->validate([
@@ -150,9 +153,8 @@ class MessengerController extends Controller
 
         $imagePath = null;
         if ($request->hasFile('image')) {
-            // Динамически выбираем диск из .env (по умолчанию public, но если на сервере s3 - загрузит туда)
-            $disk = env('FILESYSTEM_DISK', 'public');
-            $imagePath = $request->file('image')->store('messages', $disk);
+            // Сохраняем картинку напрямую в облако S3 в папку messages
+            $imagePath = $request->file('image')->store('messages', 's3');
         }
 
         $msg = $conversation->messages()->create([
@@ -217,9 +219,9 @@ class MessengerController extends Controller
         $message = Message::findOrFail($id);
         if ($message->user_id !== Auth::id()) return response()->json(['error' => 'Forbidden'], 403);
 
-        // Опционально: если хочешь удалять картинку с сервера при удалении сообщения
+        // Если у сообщения была картинка, аккуратно удаляем её из S3
         if ($message->image) {
-            Storage::disk(env('FILESYSTEM_DISK', 'public'))->delete($message->image);
+            Storage::disk('s3')->delete($message->image);
         }
 
         $message->delete();
@@ -347,7 +349,7 @@ class MessengerController extends Controller
             $conversation->messages()->create([
                 'user_id' => $user->id,
                 'body' => $originalMsg->body,
-                'image' => $originalMsg->image,
+                'image' => $originalMsg->image, // Оставляем путь как есть, он уже лежит в S3
                 'gif_url' => $originalMsg->gif_url,
                 'forwarded_from' => $authorName,
             ]);
@@ -384,33 +386,19 @@ class MessengerController extends Controller
             ->pluck('gif_url');
     }
 
-    // --- СБОРКА И ОТОБРАЖЕНИЕ СООБЩЕНИЯ (С ПОДДЕРЖКОЙ CDN) ---
+    // --- СБОРКА И ОТОБРАЖЕНИЕ СООБЩЕНИЯ (С ПОДДЕРЖКОЙ S3) ---
     private function transformMessage($msg, $user)
     {
-        $cdnUrl = rtrim(env('AWS_URL', asset('storage')), '/');
-
         $isReplyToMe = $msg->parent && $msg->parent->user_id === $user->id;
         $isMention = str_contains($msg->body ?? '', '@' . $user->name);
-
-        // 1. Аватар отправителя через CDN
-        $senderAvatar = $msg->user ? $msg->user->avatar : null;
-        if ($senderAvatar && !str_starts_with($senderAvatar, 'http')) {
-            $senderAvatar = $cdnUrl . '/' . ltrim($senderAvatar, '/');
-        }
-
-        // 2. Изображение сообщения через CDN
-        $msgImage = null;
-        if ($msg->image) {
-            $msgImage = str_starts_with($msg->image, 'http') ? $msg->image : $cdnUrl . '/' . ltrim($msg->image, '/');
-        }
 
         return [
             'id' => $msg->id,
             'senderId' => $msg->user_id,
             'senderName' => $msg->user ? $msg->user->name : 'Unknown',
-            'senderAvatar' => $senderAvatar,
+            'senderAvatar' => $msg->user ? $this->getFileUrl($msg->user->avatar) : null,
             'reactions' => $this->formatReactions($msg, $user->id),
-            'image' => $msgImage, // Умная ссылка на картинку
+            'image' => $this->getFileUrl($msg->image), // Используем нашу функцию для получения ссылки
             'text' => $msg->body,
             'gif_url' => $msg->gif_url,
             'time' => $msg->created_at->format('H:i'),
