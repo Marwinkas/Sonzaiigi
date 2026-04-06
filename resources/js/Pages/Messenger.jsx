@@ -203,7 +203,7 @@ const handleToggleFavoriteGif = () => {
                 ctx.drawImage(img, 0, 0, width, height);
 
                 canvas.toBlob((blob) => {
-                    const newFileName = file.name.replace(/\.[^/.]+$/, "") + ".webp";
+                    const newFileName = file.name?.replace(/\.[^/.]+$/, "") + ".webp";
                     const compressedFile = new File([blob], newFileName, { type: 'image/webp' });
                     setAttachment(compressedFile);
                     setAttachmentPreview(URL.createObjectURL(compressedFile));

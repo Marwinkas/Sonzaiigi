@@ -3,7 +3,7 @@ import { Head, useForm, usePage } from '@inertiajs/react';
 
 export default function Edit({ auth }) {
     const user = auth.user;
-    const fullAvatar = user.avatar ? user.avatar.replace('thumb_', 'full_') : null;
+    const fullAvatar = user.avatar ? user.avatar?.replace('thumb_', 'full_') : null;
     // Форма профиля
     const { data, setData, post, errors, processing } = useForm({
         name: user.name,

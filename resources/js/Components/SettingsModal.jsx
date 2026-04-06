@@ -31,7 +31,7 @@ const getFullAvatarUrl = (path) => {
 
     // 1. Убираем "storage/" или "/storage/" из начала, если они там есть
     // 2. Убираем лишний слэш в самом начале, чтобы не было двойных //
-    const cleanPath = path
+    const cleanPath = path?
         .replace(/^\/?storage\//, '')
         .replace(/^\//, '');
 
