@@ -26,9 +26,12 @@ import FavoriteIcon from '@mui/icons-material/Favorite';
 import HistoryIcon from '@mui/icons-material/History';
 import Notification from './NotificationBellю'
 import HeaderLogo from './HeaderLogo'
+import SettingsModal from './SettingsModal';
+import ProfileModal from './ProfileModal';
 export default function Header({ color }) {
     const { auth } = usePage().props;
     const [anchorEl, setAnchorEl] = React.useState(null);
+    const [settingsOpen, setSettingsOpen] = React.useState(false);
     const open = Boolean(anchorEl);
     const handleClick = (event) => {
         setAnchorEl(event.currentTarget);
@@ -36,7 +39,7 @@ export default function Header({ color }) {
     const handleClose = () => {
         setAnchorEl(null);
     };
-
+    const [selectedUser, setSelectedUser] = useState(null);
     return (
         <Box sx={{
             position: 'sticky', top: 0, zIndex: 10,
@@ -172,7 +175,7 @@ export default function Header({ color }) {
                             anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
                         >
                             {/* Пункты меню */}
-                            <MenuItem onClick={handleClose}>
+                            <MenuItem onClick={() => setSelectedUser(auth.user)} src={auth.user.avatar}>
                                 <ListItemIcon>
                                     <AccountCircleIcon fontSize="small" />
                                 </ListItemIcon>
@@ -210,7 +213,10 @@ export default function Header({ color }) {
                             {/* Разделитель стал темно-синим/прозрачным */}
                             <Divider sx={{ my: 1, borderColor: `hsla(${210 + color}, 100%, 60%, 0.10)` }} />
 
-                            <MenuItem onClick={handleClose}>
+                            <MenuItem onClick={() => {
+                                setSettingsOpen(true); // Открываем модалку
+                                handleClose(); // Закрываем выпадающее меню
+                            }}>
                                 <ListItemIcon>
                                     <Settings fontSize="small" />
                                 </ListItemIcon>
@@ -243,6 +249,18 @@ export default function Header({ color }) {
                     <Link href="/login" className="text-white hover:text-purple-400 font-bold">Вход</Link>
                 )}
             </Container>
+            {/* Добавляем модалку сюда */}
+            <SettingsModal
+                open={settingsOpen}
+                onClose={() => setSettingsOpen(false)}
+            />
+            <ProfileModal
+                open={!!selectedUser}
+                onClose={() => setSelectedUser(false)}
+                profileUser={selectedUser}
+                // Передаем функцию, которая покажет окно настроек
+                onOpenSettings={() => setSettingsOpen(true)}
+            />
         </Box>
     );
 }
