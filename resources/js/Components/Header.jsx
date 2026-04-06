@@ -91,7 +91,7 @@ export default function Header({ color }) {
                                     }
                                 }}
                             >
-                                <Avatar
+                                {auth.user.avatar && <Avatar
                                     src={"https://cdn.sonzaiigi.com" + auth.user.avatar.replace('/storage/', '/')}
                                     sx={{
                                         width: 32,
@@ -102,7 +102,7 @@ export default function Header({ color }) {
                                     }}
                                 >
                                     {auth.user.name[0]}
-                                </Avatar>
+                                </Avatar>}
                             </IconButton>
                         </Tooltip>
 

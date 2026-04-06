@@ -215,12 +215,12 @@ export default function Home({ posts }) {
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1 }}>
                                     {/* Автор */}
                                     <Link href={route('profile.show', post.user.username)} underline="none" sx={{ display: 'flex', alignItems: 'center', gap: 1, overflow: 'hidden' }}>
-                                        <Avatar
+                                        {post.user.avatar && <Avatar
                                             src={post.user.avatar}
                                             sx={{ width: 24, height: 24, bgcolor: '#3b82f6', fontSize: 12 }}
                                         >
                                             {post.user.name[0]}
-                                        </Avatar>
+                                        </Avatar>}
                                         <Typography variant="caption" sx={{ color: '#cbd5e1', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                             {post.user.name}
                                         </Typography>

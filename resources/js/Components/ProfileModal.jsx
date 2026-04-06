@@ -78,9 +78,9 @@ export default function ProfileModal({ open, onClose, profileUser, onOpenSetting
                 <DialogContent sx={{ p: 0, bgcolor: '#0f172a' }}>
                     <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', pt: 5, px: 4, pb: 4, bgcolor: '#1e293b', mb: 1 }}>
 
-                        <Avatar src={profileUser.avatar && "https://cdn.sonzaiigi.com" + profileUser.avatar.replace('/storage/', '/')} sx={{ width: 120, height: 120, bgcolor: '#38bdf8', color: '#0f172a', fontSize: 48, mb: 2, opacity: isBlocking ? 0.5 : 1 }}>
+                        {profileUser.avatar && <Avatar src={"https://cdn.sonzaiigi.com" + profileUser.avatar.replace('/storage/', '/')} sx={{ width: 120, height: 120, bgcolor: '#38bdf8', color: '#0f172a', fontSize: 48, mb: 2, opacity: isBlocking ? 0.5 : 1 }}>
                             {profileUser.name[0]}
-                        </Avatar>
+                        </Avatar>}
 
                         <Typography variant="h5" fontWeight="bold" color={isBlocking ? '#64748b' : '#f1f5f9'} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                             {profileUser.name}
