@@ -5,6 +5,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class Conversation extends Model
 {
+    protected $fillable = ['is_group', 'name', 'avatar', 'invite_token'];
     protected $guarded = [];
 
     // Кто состоит в чате

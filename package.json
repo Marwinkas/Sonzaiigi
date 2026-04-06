@@ -29,9 +29,12 @@
         "@dnd-kit/utilities": "^3.2.2",
         "@emotion/react": "^11.14.0",
         "@emotion/styled": "^11.14.1",
+        "@giphy/js-fetch-api": "^5.7.0",
+        "@giphy/react-components": "^10.1.1",
         "@mui/icons-material": "^7.3.6",
         "@mui/lab": "^7.0.1-beta.21",
         "@mui/material": "^7.3.6",
+        "emoji-picker-react": "^4.18.0",
         "react": "^19.2.3",
         "react-dom": "^19.2.3"
     }

@@ -98,6 +98,11 @@ class User extends Authenticatable
     {
         return $this->belongsToMany(User::class, 'mutes', 'muted_user_id', 'user_id');
     }
+    public function favoriteGifs()
+{
+    // Указываем связь "Один ко многим" с моделью FavoriteGif
+    return $this->hasMany(FavoriteGif::class);
+}
     public function conversations() { return $this->belongsToMany(Conversation::class); }
     public function messages() { return $this->hasMany(Message::class); }
 }

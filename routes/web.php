@@ -10,6 +10,11 @@ use App\Http\Controllers\FollowController;
 use App\Http\Controllers\BlockController;
 use App\Http\Controllers\MuteController;
 use App\Http\Controllers\MessengerController;
+// Пересылка сообщений
+Route::post('/messages/forward', [MessengerController::class, 'forwardMessage'])->name('messages.forward');
+
+// Избранные гифки (добавление/удаление)
+Route::post('/messages/toggle-favorite-gif', [MessengerController::class, 'toggleFavoriteGif'])->name('messages.favorite-gif.toggle');
 Route::post('/users/{user}/mute', [MuteController::class, 'toggle'])->name('users.mute');
 Route::post('/users/{user}/block', [BlockController::class, 'toggle'])->name('users.block');
 Route::post('/users/{user}/follow', [FollowController::class, 'toggle'])->name('users.follow');
@@ -48,11 +53,12 @@ Route::middleware('auth')->group(function () {
     // 1. Подтверждение кода
     Route::get('/auth/verify', [AuthController::class, 'showVerify'])->name('auth.verify');
     Route::post('/auth/verify', [AuthController::class, 'verifyCode']);
-
+Route::post('/groups/create', [MessengerController::class, 'createGroup'])->name('groups.create');
+Route::get('/join/{token}', [MessengerController::class, 'joinGroup'])->name('groups.join');
     // 2. Установка ника
     Route::get('/auth/nickname', [AuthController::class, 'showNicknameForm'])->name('auth.nickname');
     Route::post('/auth/nickname', [AuthController::class, 'saveNickname']);
-
+Route::post('/messages/{message}/react', [MessengerController::class, 'react']);
     Route::get('/settings', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/settings', [ProfileController::class, 'update'])->name('profile.update'); // Используем POST для отправки файлов
     Route::put('/settings/password', [ProfileController::class, 'updatePassword'])->name('profile.password');
@@ -60,6 +66,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/posts/{post}/like', [PostController::class, 'toggleLike'])->name('posts.like');
     // Выход
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
+
 });
 Route::delete('/conversations/{conversation}', [MessengerController::class, 'destroyConversation']);
 Route::get('/u/{username}', [ProfileController::class, 'show'])->name('profile.show');
