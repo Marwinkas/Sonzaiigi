@@ -92,7 +92,7 @@ export default function Header({ color }) {
                                 }}
                             >
                                 <Avatar
-                                    src={auth.user.avatar}
+                                    src={"https://cdn.sonzaiigi.com" + auth.user.avatar.replace('/storage/', '/')}
                                     sx={{
                                         width: 32,
                                         height: 32,

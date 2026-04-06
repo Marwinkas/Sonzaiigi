@@ -23,10 +23,26 @@ export default function SettingsModal({ open, onClose }) {
         _method: 'patch',
     });
 
-    const [avatarPreview, setAvatarPreview] = useState(user?.avatar);
+const getFullAvatarUrl = (path) => {
+    if (!path) return null;
+
+    // Если это уже полная ссылка или blob, отдаем сразу
+    if (path.startsWith('http') || path.startsWith('data:')) return path;
+
+    // 1. Убираем "storage/" или "/storage/" из начала, если они там есть
+    // 2. Убираем лишний слэш в самом начале, чтобы не было двойных //
+    const cleanPath = path
+        .replace(/^\/?storage\//, '')
+        .replace(/^\//, '');
+
+    // Склеиваем с CDN
+    return `https://cdn.sonzaiigi.com/${cleanPath}`;
+};
+
+    const [avatarPreview, setAvatarPreview] = useState(getFullAvatarUrl(user?.avatar));
 
     useEffect(() => {
-        setAvatarPreview(user?.avatar);
+        setAvatarPreview(getFullAvatarUrl(user?.avatar));
     }, [user]);
 
     const handleAvatarChange = (e) => {

@@ -12,11 +12,8 @@ export default defineConfig({
     ],
     // Настраиваем сервер для работы внутри Docker без конфликтов
     server: {
-        host: '0.0.0.0', // Позволяет Docker контейнеру "видеть" запросы
-        port: 5173,
-        cors: true, // Самое главное: разрешаем cross-origin запросы!
-        hmr: {
-            host: 'localhost', // Говорим браузеру, где искать обновления
-        },
-    },
+            https: true, // Включаем HTTPS
+            host: '0.0.0.0',
+            hmr: { host: 'localhost' }
+        }
 });

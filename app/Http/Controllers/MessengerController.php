@@ -5,18 +5,25 @@ namespace App\Http\Controllers;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\User;
-use App\Models\Reaction; // <-- ВАЖНО!
+use App\Models\FavoriteGif; // <-- Убедись, что модель существует
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB; // <-- ВАЖНО!
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Storage; // <-- Добавили для работы с дисками
 
 class MessengerController extends Controller
 {
+    // --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ CDN ---
+    // Берет URL из .env или использует стандартный путь
+    private function getCdnUrl() {
+        return rtrim(env('AWS_URL', asset('storage')), '/');
+    }
 
     public function index(Request $request)
     {
         $user = Auth::user();
+        $cdn = $this->getCdnUrl();
 
         $chats = $user->conversations()
             ->with(['users', 'messages' => function ($q) {
@@ -24,7 +31,7 @@ class MessengerController extends Controller
             }])
             ->withCount('messages')
             ->get()
-            ->map(function ($conv) use ($user) {
+            ->map(function ($conv) use ($user, $cdn) {
                 $lastMsg = $conv->messages->first();
 
                 // 1. ЕСЛИ ЭТО ГРУППА
@@ -33,12 +40,12 @@ class MessengerController extends Controller
                         'id' => $conv->id,
                         'is_group' => true,
                         'name' => $conv->name,
-                        'avatar' => $conv->avatar ? asset('storage/' . $conv->avatar) : null,
+                        'avatar' => $conv->avatar ? $cdn . '/' . ltrim($conv->avatar, '/') : null,
                         'invite_token' => $conv->invite_token,
                         'lastMessage' => $lastMsg ? $lastMsg->body : 'Нет сообщений',
                         'time' => $lastMsg ? $lastMsg->created_at->format('H:i') : '',
-                        'favoriteGifs' => $user->favoriteGifs()->pluck('gif_url'),
-                        'can_reply' => true, // В группе могут писать все участники
+                        'favoriteGifs' => $this->getSortedGifs($user),
+                        'can_reply' => true,
                         'user' => null
                     ];
                 }
@@ -48,6 +55,11 @@ class MessengerController extends Controller
                 if (!$otherUser) return null;
 
                 $otherUser->load(['followers', 'following', 'blockers', 'mutedBy']);
+
+                // Подставляем CDN к аватару собеседника
+                if ($otherUser->avatar && !str_starts_with($otherUser->avatar, 'http')) {
+                    $otherUser->avatar = $cdn . '/' . ltrim($otherUser->avatar, '/');
+                }
 
                 $iFollowThem = DB::table('follows')->where('follower_id', $user->id)->where('followed_id', $otherUser->id)->exists();
                 $theyFollowMe = DB::table('follows')->where('follower_id', $otherUser->id)->where('followed_id', $user->id)->exists();
@@ -67,7 +79,7 @@ class MessengerController extends Controller
                     'avatar' => $otherUser->avatar,
                     'lastMessage' => $lastMsg ? $lastMsg->body : 'Нет сообщений',
                     'time' => $lastMsg ? $lastMsg->created_at->format('H:i') : '',
-                    'favoriteGifs' => $user->favoriteGifs()->pluck('gif_url'),
+                    'favoriteGifs' => $this->getSortedGifs($user),
                     'can_reply' => $canReply,
                 ];
             })
@@ -81,51 +93,51 @@ class MessengerController extends Controller
         ]);
     }
 
-public function messages(Conversation $conversation, Request $request)
-{
-    $user = Auth::user();
-    $offset = $request->query('offset', 0);
-    $limit = ($offset === 0) ? 10 : 19;
+    public function messages(Conversation $conversation, Request $request)
+    {
+        $user = Auth::user();
+        $offset = $request->query('offset', 0);
+        $limit = ($offset === 0) ? 10 : 19;
 
-    $canReply = true;
+        $canReply = true;
 
-    // Проверка блокировок ТОЛЬКО для личных чатов
-    if (!$conversation->is_group) {
-        $otherUser = $conversation->users->where('id', '!=', $user->id)->first();
-        if (!$otherUser) return response()->json(['messages' => [], 'can_reply' => false]);
+        if (!$conversation->is_group) {
+            $otherUser = $conversation->users->where('id', '!=', $user->id)->first();
+            if (!$otherUser) return response()->json(['messages' => [], 'can_reply' => false]);
 
-        $iFollowThem = DB::table('follows')->where('follower_id', $user->id)->where('followed_id', $otherUser->id)->exists();
-        $theyFollowMe = DB::table('follows')->where('follower_id', $otherUser->id)->where('followed_id', $user->id)->exists();
-        $iBlockedThem = DB::table('blocks')->where('blocker_id', $user->id)->where('blocked_id', $otherUser->id)->exists();
-        $theyBlockedMe = DB::table('blocks')->where('blocker_id', $otherUser->id)->where('blocked_id', $user->id)->exists();
+            $iFollowThem = DB::table('follows')->where('follower_id', $user->id)->where('followed_id', $otherUser->id)->exists();
+            $theyFollowMe = DB::table('follows')->where('follower_id', $otherUser->id)->where('followed_id', $user->id)->exists();
+            $iBlockedThem = DB::table('blocks')->where('blocker_id', $user->id)->where('blocked_id', $otherUser->id)->exists();
+            $theyBlockedMe = DB::table('blocks')->where('blocker_id', $otherUser->id)->where('blocked_id', $user->id)->exists();
 
-        $canReply = ($iFollowThem && $theyFollowMe) && !$iBlockedThem && !$theyBlockedMe;
+            $canReply = ($iFollowThem && $theyFollowMe) && !$iBlockedThem && !$theyBlockedMe;
+        }
+
+        $messages = $conversation->messages()
+            ->with(['parent.user', 'reactions', 'user'])
+            ->latest()
+            ->skip($offset)
+            ->take($limit)
+            ->get()
+            ->reverse()
+            ->values()
+            ->map(function ($msg) use ($user) {
+                return $this->transformMessage($msg, $user);
+            });
+
+        return response()->json([
+            'messages' => $messages,
+            'has_more' => $messages->count() >= $limit,
+            'can_reply' => $canReply
+        ]);
     }
 
-    $messages = $conversation->messages()
-        ->with(['parent.user', 'reactions', 'user']) // Загружаем отправителя и реакции
-        ->latest()
-        ->skip($offset)
-        ->take($limit)
-        ->get()
-        ->reverse()
-        ->values()
-        ->map(function ($msg) use ($user) {
-            return $this->transformMessage($msg, $user); // <-- ТЕПЕРЬ ТУТ ВСЕ ДАННЫЕ
-        });
-
-    return response()->json([
-        'messages' => $messages,
-        'has_more' => $messages->count() >= $limit,
-        'can_reply' => $canReply
-    ]);
-}
-
+    // --- ПОЛНЫЙ КОД ЗАГРУЗКИ КАРТИНКИ ---
     public function store(Request $request, Conversation $conversation)
     {
         $request->validate([
             'text'      => 'nullable|string',
-            'image'     => 'nullable|image|max:10240',
+            'image'     => 'nullable|image|max:10240', // Лимит 10 МБ
             'gif_url'   => 'nullable|string',
             'parent_id' => 'nullable|exists:messages,id'
         ]);
@@ -136,7 +148,12 @@ public function messages(Conversation $conversation, Request $request)
             return response()->json(['message' => 'Empty message', 'errors' => ['text' => ['Сообщение пустое']]], 422);
         }
 
-        $imagePath = $request->hasFile('image') ? $request->file('image')->store('messages', 'public') : null;
+        $imagePath = null;
+        if ($request->hasFile('image')) {
+            // Динамически выбираем диск из .env (по умолчанию public, но если на сервере s3 - загрузит туда)
+            $disk = env('FILESYSTEM_DISK', 'public');
+            $imagePath = $request->file('image')->store('messages', $disk);
+        }
 
         $msg = $conversation->messages()->create([
             'user_id'   => $user->id,
@@ -146,7 +163,6 @@ public function messages(Conversation $conversation, Request $request)
             'parent_id' => $request->parent_id
         ]);
 
-        // Грузим все связи перед отправкой ответа
         $msg->load(['parent.user', 'reactions', 'user']);
 
         return response()->json($this->transformMessage($msg, $user));
@@ -162,9 +178,9 @@ public function messages(Conversation $conversation, Request $request)
 
         if ($existing) {
             if ($existing->emoji === $emoji) {
-                $existing->delete(); // Убираем реакцию
+                $existing->delete();
             } else {
-                $existing->update(['emoji' => $emoji]); // Меняем на другую
+                $existing->update(['emoji' => $emoji]);
             }
         } else {
             $uniqueCount = $message->reactions()->distinct()->count('emoji');
@@ -180,7 +196,6 @@ public function messages(Conversation $conversation, Request $request)
             ]);
         }
 
-        // Возвращаем свежие реакции (без лишних запросов к БД)
         return response()->json($this->formatReactions($message->fresh('reactions'), $user->id));
     }
 
@@ -201,6 +216,12 @@ public function messages(Conversation $conversation, Request $request)
     {
         $message = Message::findOrFail($id);
         if ($message->user_id !== Auth::id()) return response()->json(['error' => 'Forbidden'], 403);
+
+        // Опционально: если хочешь удалять картинку с сервера при удалении сообщения
+        if ($message->image) {
+            Storage::disk(env('FILESYSTEM_DISK', 'public'))->delete($message->image);
+        }
+
         $message->delete();
         return response()->json(['success' => true]);
     }
@@ -309,21 +330,87 @@ public function messages(Conversation $conversation, Request $request)
         return redirect()->route('messages', ['chat' => $conversation->id]);
     }
 
-    // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+    // --- ПЕРЕСЫЛКА ---
+    public function forwardMessage(Request $request) {
+        $request->validate([
+            'message_id' => 'required|exists:messages,id',
+            'conversation_ids' => 'required|array',
+            'include_author' => 'required|boolean'
+        ]);
 
-    // 1. Единый сборщик объекта сообщения (чтобы не писать это 5 раз)
+        $originalMsg = Message::with('user')->findOrFail($request->message_id);
+        $user = Auth::user();
+        $authorName = ($request->include_author && $originalMsg->user) ? $originalMsg->user->name : null;
+
+        foreach ($request->conversation_ids as $convId) {
+            $conversation = Conversation::findOrFail($convId);
+            $conversation->messages()->create([
+                'user_id' => $user->id,
+                'body' => $originalMsg->body,
+                'image' => $originalMsg->image,
+                'gif_url' => $originalMsg->gif_url,
+                'forwarded_from' => $authorName,
+            ]);
+        }
+
+        return response()->json(['success' => true]);
+    }
+
+    // --- ИЗБРАННЫЕ ГИФКИ ---
+    public function toggleFavoriteGif(Request $request) {
+        $request->validate(['gif_url' => 'required|string']);
+        $user = Auth::user();
+
+        $gif = \App\Models\FavoriteGif::where('user_id', $user->id)
+            ->where('gif_url', $request->gif_url)
+            ->first();
+
+        if ($gif) {
+            $gif->delete();
+        } else {
+            \App\Models\FavoriteGif::create([
+                'user_id' => $user->id,
+                'gif_url' => $request->gif_url
+            ]);
+        }
+
+        return response()->json(['favorite_gifs' => $this->getSortedGifs($user)]);
+    }
+
+    private function getSortedGifs($user) {
+        return \DB::table('favorite_gifs')
+            ->where('user_id', $user->id)
+            ->orderBy('updated_at', 'desc')
+            ->pluck('gif_url');
+    }
+
+    // --- СБОРКА И ОТОБРАЖЕНИЕ СООБЩЕНИЯ (С ПОДДЕРЖКОЙ CDN) ---
     private function transformMessage($msg, $user)
     {
+        $cdnUrl = rtrim(env('AWS_URL', asset('storage')), '/');
+
         $isReplyToMe = $msg->parent && $msg->parent->user_id === $user->id;
         $isMention = str_contains($msg->body ?? '', '@' . $user->name);
+
+        // 1. Аватар отправителя через CDN
+        $senderAvatar = $msg->user ? $msg->user->avatar : null;
+        if ($senderAvatar && !str_starts_with($senderAvatar, 'http')) {
+            $senderAvatar = $cdnUrl . '/' . ltrim($senderAvatar, '/');
+        }
+
+        // 2. Изображение сообщения через CDN
+        $msgImage = null;
+        if ($msg->image) {
+            $msgImage = str_starts_with($msg->image, 'http') ? $msg->image : $cdnUrl . '/' . ltrim($msg->image, '/');
+        }
 
         return [
             'id' => $msg->id,
             'senderId' => $msg->user_id,
-            'senderName' => $msg->user ? $msg->user->name : 'Unknown', // Имя отправителя (для групп)
-            'senderAvatar' => $msg->user ? $msg->user->avatar : null,  // Аватарка (для групп)
+            'senderName' => $msg->user ? $msg->user->name : 'Unknown',
+            'senderAvatar' => $senderAvatar,
             'reactions' => $this->formatReactions($msg, $user->id),
-            'image' => $msg->image ? asset('storage/' . $msg->image) : null,
+            'image' => $msgImage, // Умная ссылка на картинку
             'text' => $msg->body,
             'gif_url' => $msg->gif_url,
             'time' => $msg->created_at->format('H:i'),
@@ -337,10 +424,9 @@ public function messages(Conversation $conversation, Request $request)
         ];
     }
 
-    // 2. Супер-быстрый подсчет реакций (БЕЗ запросов к базе внутри цикла)
     private function formatReactions($message, $userId) {
         if (!$message->relationLoaded('reactions')) {
-            $message->load('reactions'); // Подгружаем, если забыли
+            $message->load('reactions');
         }
 
         return $message->reactions
@@ -353,59 +439,4 @@ public function messages(Conversation $conversation, Request $request)
                 ];
             })->values();
     }
-
-// Метод получения списка (добавь это в index или отдельный метод)
-private function getSortedGifs($user) {
-    return \DB::table('favorite_gifs')
-        ->where('user_id', $user->id)
-        ->orderBy('updated_at', 'desc') // Самые новые/используемые — сверху
-        ->pluck('gif_url');
-}
-
-// Переключение избранного
-public function toggleFavoriteGif(Request $request) {
-    $request->validate(['gif_url' => 'required|string']);
-    $user = Auth::user();
-
-    $gif = \App\Models\FavoriteGif::where('user_id', $user->id)
-        ->where('gif_url', $request->gif_url)
-        ->first();
-
-    if ($gif) {
-        $gif->delete(); // Если была — удаляем
-    } else {
-        \App\Models\FavoriteGif::create([
-            'user_id' => $user->id,
-            'gif_url' => $request->gif_url
-        ]);
-    }
-
-    return response()->json(['favorite_gifs' => $this->getSortedGifs($user)]);
-}
-
-// Пересылка
-public function forwardMessage(Request $request) {
-    $request->validate([
-        'message_id' => 'required|exists:messages,id',
-        'conversation_ids' => 'required|array',
-        'include_author' => 'required|boolean'
-    ]);
-
-    $originalMsg = Message::findOrFail($request->message_id);
-    $user = Auth::user();
-    $authorName = $request->include_author ? $originalMsg->user->name : null;
-
-    foreach ($request->conversation_ids as $convId) {
-        $conversation = Conversation::findOrFail($convId);
-        $conversation->messages()->create([
-            'user_id' => $user->id,
-            'body' => $originalMsg->body,
-            'image' => $originalMsg->image,
-            'gif_url' => $originalMsg->gif_url,
-            'forwarded_from' => $authorName,
-        ]);
-    }
-
-    return response()->json(['success' => true]);
-}
 }
